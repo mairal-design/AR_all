@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AR Multi Model + Bounding Box + Labels</title>
+
+<!-- Import Map -->
+<script type="importmap">
+{
+    "imports": {
+        "three": "./build/three.module.js",
+        "three/addons/": "./jsm/"
+    }
+}
+</script>
+
+<style>
+body { margin: 0; overflow: hidden; }
+#ui {
+    position: absolute;
+    top: 10px; left: 10px;
+    z-index: 10;
+    background: white;
+    padding: 8px 14px;
+    border-radius: 8px;
+}
+</style>
+</head>
+<body>
+
+<div id="ui">
+    <button id="startAR">View in AR</button>
+</div>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+
+let scene, camera, renderer;
+let reticle, controller;
+let model1, model2;
+let hitTestSource = null;
+let hitTestRequested = false;
+let modelsPlaced = false;
+
+// -------------------------------------------
+// Helper: Create text label using CanvasTexture
+// -------------------------------------------
+function makeTextLabel(text) {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    ctx.font = "50px Arial";
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 6;
+
+    ctx.strokeText(text, 10, 60);
+    ctx.fillText(text, 10, 60);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: texture, transparent: true })
+    );
+    sprite.scale.set(0.35, 0.15, 1);
+    return sprite;
+}
+
+// -------------------------------------------
+// Helper: Add bounding box + dimension label
+// -------------------------------------------
+function addBoundingBoxAndLabel(obj) {
+    const box = new THREE.Box3().setFromObject(obj);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    const width = size.x.toFixed(2);
+    const height = size.y.toFixed(2);
+
+    const helper = new THREE.Box3Helper(box, 0xff0000);
+    scene.add(helper);
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    const label = makeTextLabel(`W: ${width}m  H: ${height}m`);
+    label.position.set(center.x, center.y + size.y * 0.7, center.z);
+    scene.add(label);
+}
+
+// -------------------------------------------
+// Setup scene
+// -------------------------------------------
+init();
+animate();
+
+function init() {
+
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 40);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // Light
+    const light = new THREE.HemisphereLight(0xffffff, 0x888888, 1.2);
+    scene.add(light);
+
+    // Load models
+    const loader = new GLTFLoader();
+
+    loader.load("wine-lady-modified.glb", (gltf) => {
+        model1 = gltf.scene;
+        model1.scale.set(1,1,1);
+        model1.visible = false;
+        scene.add(model1);
+    });
+
+    loader.load("chair1.glb", (gltf) => {
+        model2 = gltf.scene;
+        model2.scale.set(1,1,1);
+        model2.visible = false;
+        scene.add(model2);
+    });
+
+    // Hit-test reticle
+    reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.08, 0.12, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    controller = renderer.xr.getController(0);
+    controller.addEventListener('select', placeModels);
+    scene.add(controller);
+
+    // AR button
+    const arBtn = ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] });
+    document.getElementById("startAR").addEventListener("click", () => {
+        arBtn.click();
+    });
+
+    window.addEventListener("resize", onResize);
+}
+
+// -------------------------------------------
+// Place both models in AR
+// -------------------------------------------
+function placeModels() {
+    if (!modelsPlaced && reticle.visible && model1 && model2) {
+
+        // First model
+        model1.position.setFromMatrixPosition(reticle.matrix);
+        model1.visible = true;
+        addBoundingBoxAndLabel(model1);
+
+        // Second model placed next to first
+        model2.position.copy(model1.position);
+        model2.position.x += 0.4; 
+        model2.visible = true;
+        addBoundingBoxAndLabel(model2);
+
+        modelsPlaced = true;
+    }
+}
+
+function onResize() {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+    renderer.setAnimationLoop(render);
+}
+
+function render(timestamp, frame) {
+
+    if (frame) {
+        const session = renderer.xr.getSession();
+        const refSpace = renderer.xr.getReferenceSpace();
+
+        if (!hitTestRequested) {
+            session.requestReferenceSpace('viewer').then((viewerSpace) => {
+                session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+                    hitTestSource = source;
+                });
+            });
+
+            session.addEventListener("end", () => {
+                hitTestSource = null;
+                hitTestRequested = false;
+            });
+
+            hitTestRequested = true;
+        }
+
+        if (hitTestSource) {
+            const hits = frame.getHitTestResults(hitTestSource);
+            if (hits.length) {
+                const hit = hits[0];
+                reticle.visible = true;
+                reticle.matrix.fromArray(hit.getPose(refSpace).transform.matrix);
+            } else {
+                reticle.visible = false;
+            }
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+
+</script>
+
+</body>
+</html>
