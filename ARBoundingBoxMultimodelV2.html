@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>AR Multi Model + Bounding Box + Labels</title>
+
+<!-- Import Map -->
+<script type="importmap">
+{
+    "imports": {
+        "three": "./build/three.module.js",
+        "three/addons/": "./jsm/"
+    }
+}
+</script>
+
+<style>
+body { margin: 0; overflow: hidden; font-family: Arial; }
+
+/* FIX: Allows camera feed to show */
+canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+}
+
+#startAR {
+    position: absolute;
+    top: 10px; left: 10px;
+    padding: 10px 16px;
+    z-index: 20;
+    background: white;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    font-size: 16px;
+}
+</style>
+</head>
+<body>
+
+<button id="startAR">Start AR</button>
+
+<script type="module">
+
+import * as THREE from 'three';
+import { ARButton } from 'three/addons/webxr/ARButton.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+let scene, camera, renderer;
+let reticle;
+let hitTestSource = null;
+let hitTestRequested = false;
+let model1, model2;
+let placed = false;
+
+// -------------------------------------------------------
+// Create text label
+// -------------------------------------------------------
+function makeTextLabel(text) {
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = 512;
+    canvas.height = 256;
+
+    ctx.font = "60px Arial";
+    ctx.fillStyle = "white";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 8;
+
+    ctx.strokeText(text, 20, 150);
+    ctx.fillText(text, 20, 150);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, transparent: true })
+    );
+    sprite.scale.set(0.5, 0.25, 1);
+    return sprite;
+}
+
+// -------------------------------------------------------
+// Add bounding box + dimensions
+// -------------------------------------------------------
+function addBoundingBoxAndLabel(obj) {
+    const box = new THREE.Box3().setFromObject(obj);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    const w = size.x.toFixed(2);
+    const h = size.y.toFixed(2);
+
+    const helper = new THREE.Box3Helper(box, 0xff0000);
+    scene.add(helper);
+
+    const center = new THREE.Vector3();
+    box.getCenter(center);
+
+    const label = makeTextLabel(`W: ${w}m | H: ${h}m`);
+    label.position.set(center.x, center.y + size.y * 0.7, center.z);
+
+    scene.add(label);
+}
+
+// -------------------------------------------------------
+// INIT
+// -------------------------------------------------------
+function init() {
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(
+        70,
+        window.innerWidth / window.innerHeight,
+        0.01,
+        40
+    );
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+
+    // Load models
+    const loader = new GLTFLoader();
+
+    loader.load("./wine-lady-modified.glb", (gltf) => {
+        model1 = gltf.scene;
+        model1.scale.set(1, 1, 1);
+        model1.visible = false;
+        scene.add(model1);
+    });
+
+    loader.load("./chair1.glb", (gltf) => {
+        model2 = gltf.scene;
+        model2.scale.set(1, 1, 1);
+        model2.visible = false;
+        scene.add(model2);
+    });
+
+    // Reticle for placement
+    reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.1, 0.15, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // Tap controller
+    const controller = renderer.xr.getController(0);
+    controller.addEventListener("select", placeObjects);
+    scene.add(controller);
+
+    // AR button must stay visible in DOM
+    const arBtn = ARButton.createButton(renderer, {
+        requiredFeatures: ["hit-test"],
+        optionalFeatures: ["dom-overlay"],
+        domOverlay: { root: document.body }
+    });
+    document.body.appendChild(arBtn);
+
+    // Custom button triggers ARButton
+    document.getElementById("startAR").onclick = () => arBtn.click();
+
+    renderer.xr.addEventListener("sessionend", () => {
+        reticle.visible = false;
+        hitTestRequested = false;
+        hitTestSource = null;
+        placed = false;
+    });
+
+    renderer.setAnimationLoop(render);
+
+    window.addEventListener("resize", () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+}
+
+// -------------------------------------------------------
+// PLACE MODELS
+// -------------------------------------------------------
+function placeObjects() {
+    if (!reticle.visible || placed || !model1 || !model2) return;
+
+    const pos = new THREE.Vector3();
+    pos.setFromMatrixPosition(reticle.matrix);
+
+    model1.position.copy(pos);
+    model1.visible = true;
+
+    model2.position.copy(pos);
+    model2.position.x += 0.4;
+    model2.visible = true;
+
+    addBoundingBoxAndLabel(model1);
+    addBoundingBoxAndLabel(model2);
+
+    placed = true;
+}
+
+// -------------------------------------------------------
+// RENDER LOOP + HIT TEST
+// -------------------------------------------------------
+function render(timestamp, frame) {
+
+    if (frame) {
+        const session = renderer.xr.getSession();
+
+        if (!hitTestRequested) {
+
+            session.requestReferenceSpace("viewer").then((viewerSpace) => {
+                session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+                    hitTestSource = source;
+                });
+            });
+
+            session.requestReferenceSpace("local").then((refSpace) => {
+                renderer.xr.setReferenceSpace(refSpace);
+            });
+
+            session.addEventListener("end", () => {
+                hitTestRequested = false;
+                hitTestSource = null;
+            });
+
+            hitTestRequested = true;
+        }
+
+        if (hitTestSource) {
+            const refSpace = renderer.xr.getReferenceSpace();
+            const results = frame.getHitTestResults(hitTestSource);
+
+            if (results.length > 0) {
+                const hitPose = results[0].getPose(refSpace);
+                reticle.visible = true;
+                reticle.matrix.fromArray(hitPose.transform.matrix);
+            } else {
+                reticle.visible = false;
+            }
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+
+// -------------------------------------------------------
+init();
+</script>
+
+</body>
+</html>
