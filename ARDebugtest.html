@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebXR AR Debug Test</title>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "./build/three.module.js",
+        "three/addons/": "./jsm/"
+    }
+}
+</script>
+
+<style>
+body { margin: 0; font-family: Arial; background: #111; color: white; }
+#debug {
+    position: fixed;
+    top: 10px; left: 10px;
+    background: rgba(0,0,0,0.7);
+    padding: 15px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 400px;
+    font-size: 14px;
+}
+.ok { color: #00ff00; }
+.fail { color: #ff4444; }
+</style>
+</head>
+<body>
+
+<div id="debug">Loading…</div>
+
+<script type="module">
+import * as THREE from "three";
+import { ARButton } from "three/addons/webxr/ARButton.js";
+
+const debug = document.getElementById("debug");
+function log(msg, cls="") {
+    debug.innerHTML += `<div class="${cls}">${msg}</div>`;
+    console.log(msg);
+}
+debug.innerHTML = "<b>WebXR AR Debug Console</b><br><br>";
+
+// ----------------------------------------------------------------------------------
+// PERMISSION TESTS
+// ----------------------------------------------------------------------------------
+
+async function checkCamera() {
+    try {
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        log("✔ Camera permission granted", "ok");
+        return true;
+    } catch (e) {
+        log("✘ Camera permission denied: " + e, "fail");
+        return false;
+    }
+}
+
+async function checkMotion() {
+    if (typeof DeviceMotionEvent !== "undefined" &&
+        typeof DeviceMotionEvent.requestPermission === "function") {
+
+        try {
+            let state = await DeviceMotionEvent.requestPermission();
+            log("✔ Motion sensor permission: " + state, "ok");
+            return state === "granted";
+        } catch (e) {
+            log("✘ Motion permission denied: " + e, "fail");
+            return false;
+        }
+    } else {
+        log("✔ Motion sensors available (no requestPermission needed)", "ok");
+        return true;
+    }
+}
+
+async function checkWebXR() {
+    if (!navigator.xr) {
+        log("✘ navigator.xr is missing → Browser does NOT support WebXR!", "fail");
+        return false;
+    }
+    log("✔ navigator.xr is available", "ok");
+
+    try {
+        const supported = await navigator.xr.isSessionSupported("immersive-ar");
+        if (supported) {
+            log("✔ immersive-ar supported", "ok");
+            return true;
+        } else {
+            log("✘ immersive-ar NOT supported", "fail");
+            return false;
+        }
+    } catch (e) {
+        log("✘ immersive-ar check error: " + e, "fail");
+        return false;
+    }
+}
+
+// ----------------------------------------------------------------------------------
+// MAIN AR INITIALIZATION
+// ----------------------------------------------------------------------------------
+
+async function startAR() {
+    debug.innerHTML += "<hr><b>Starting AR initialization…</b><br>";
+
+    const cam = await checkCamera();
+    const motion = await checkMotion();
+    const xr = await checkWebXR();
+
+    if (!cam || !motion || !xr) {
+        log("✘ AR cannot start because one or more permissions failed.", "fail");
+        return;
+    }
+
+    log("✔ All permissions OK → Initializing ARButton…", "ok");
+
+    // Setup renderer
+    const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    // Create AR Button
+    const arBtn = ARButton.createButton(renderer, {
+        requiredFeatures: ["hit-test"],
+        optionalFeatures: ["dom-overlay"],
+        domOverlay: { root: document.body }
+    });
+
+    document.body.appendChild(arBtn);
+    log("✔ ARButton created and added to DOM", "ok");
+
+    // Simple scene for debug
+    const scene = new THREE.Scene();
+    const cameraObj = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+
+    renderer.setAnimationLoop(() => {
+        renderer.render(scene, cameraObj);
+    });
+
+    log("✔ Renderer animation loop started", "ok");
+}
+
+startAR();
+
+</script>
+
+</body>
+</html>
