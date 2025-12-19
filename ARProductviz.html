@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AR Product Visualizer</title>
+
+<!-- Import Map -->
+<script type="importmap">
+{
+    "imports": {
+        "three": "./build/three.module.js",
+        "three/addons/": "./jsm/"
+    }
+}
+</script>
+
+<style>
+body { margin:0; overflow:hidden; font-family:Arial; }
+
+/* Camera feed behind canvas */
+canvas {
+    position: absolute;
+    top:0; left:0;
+    width:100vw; height:100vh;
+    z-index:0;
+}
+
+/* Main AR button */
+#startAR {
+    position:absolute;
+    top:10px; left:10px;
+    padding:10px 16px;
+    z-index:20;
+    background:white;
+    border:1px solid #ccc;
+    border-radius:8px;
+    font-size:16px;
+}
+
+/* Dropdown container */
+#modelMenuBtn {
+    position:absolute;
+    top:60px; left:10px;
+    padding:10px 16px;
+    z-index:20;
+    background:white;
+    border:1px solid #ccc;
+    border-radius:8px;
+    font-size:16px;
+    cursor:pointer;
+}
+
+/* Dropdown Panel */
+#dropdownPanel {
+    position:absolute;
+    top:110px; left:10px;
+    width:240px;
+    z-index:30;
+    background:white;
+    border:1px solid #ccc;
+    border-radius:6px;
+    padding:10px;
+    display:none;
+    max-height:400px;
+    overflow-y:auto;
+}
+
+/* Category header */
+.category {
+    font-weight:bold;
+    margin-top:8px;
+    cursor:pointer;
+}
+
+/* Sub-items */
+.subitem {
+    margin-left:15px;
+    padding:4px;
+    cursor:pointer;
+}
+.subitem:hover {
+    background:#eee;
+    border-radius:4px;
+}
+
+/* Dimensions Overlay */
+#dimOverlay {
+    position:absolute;
+    bottom:10px; left:10px;
+    z-index:30;
+    background:rgba(0,0,0,0.5);
+    color:white;
+    padding:10px 16px;
+    border-radius:8px;
+    font-size:14px;
+    min-width:180px;
+}
+</style>
+</head>
+
+<body>
+
+<button id="startAR">Start AR</button>
+<button id="modelMenuBtn">Models ▼</button>
+
+<div id="dropdownPanel"></div>
+
+<div id="dimOverlay">
+    <b>Dimensions</b><br>
+    Width: -- m<br>
+    Height: -- m<br>
+    Depth: -- m<br>
+    Scale: 1.0x<br>
+    Rotation: 0°
+</div>
+
+<script type="module">
+
+import * as THREE from "three";
+import { ARButton } from "three/addons/webxr/ARButton.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+let scene, camera, renderer;
+let reticle;
+let hitTestSource = null;
+let hitTestRequested = false;
+let currentModel = null;
+let selectedModelName = null;
+
+let dragging = false;
+let scaling = false;
+let rotating = false;
+
+let prevTouchDist = 0;
+let prevTouchAngle = 0;
+
+// ------------------------------------------------------------
+// MODEL LIST (your filenames EXACTLY)
+// ------------------------------------------------------------
+const modelList = {
+    chairs: [
+        { name: "Chair 1", file: "chair1.glb" },
+        { name: "Chair 2", file: "chair2.glb" },
+        { name: "Chair 3", file: "chair3.glb" },
+        { name: "Chair 4", file: "chair4.glb" },
+        { name: "Chair 5", file: "chair5.glb" },
+        { name: "Chair 6", file: "chair6.glb" }
+    ],
+    special: [
+        { name: "Office Chair", file: "office-chair.glb" },
+        { name: "Sheen Chair", file: "SheenChair.glb" }
+    ],
+    objects: [
+        { name: "Coffee Mug", file: "coffeeMug.glb" }
+    ],
+    custom: [
+        { name: "Custom GLB", file: "Horse.glb" }
+    ]
+};
+
+// ------------------------------------------------------------
+// Build Dropdown UI
+// ------------------------------------------------------------
+function buildDropdown() {
+    const dp = document.getElementById("dropdownPanel");
+    dp.innerHTML = "";
+
+    function addCategory(title, items) {
+        const cat = document.createElement("div");
+        cat.className = "category";
+        cat.textContent = title + " ▶";
+        dp.appendChild(cat);
+
+        const sub = document.createElement("div");
+        sub.style.display = "none";
+
+        items.forEach(m => {
+            const s = document.createElement("div");
+            s.className = "subitem";
+            s.textContent = m.name;
+            s.onclick = () => {
+                selectedModelName = m.file;
+                reticle.visible = true;
+            };
+            sub.appendChild(s);
+        });
+
+        dp.appendChild(sub);
+
+        cat.onclick = () => {
+            sub.style.display = (sub.style.display === "none") ? "block" : "none";
+        };
+    }
+
+    addCategory("Chairs", modelList.chairs);
+    addCategory("Special Chairs", modelList.special);
+    addCategory("Objects", modelList.objects);
+    addCategory("Custom", modelList.custom);
+}
+buildDropdown();
+
+// ------------------------------------------------------------
+// Load selected GLB
+// ------------------------------------------------------------
+const loader = new GLTFLoader();
+
+function loadModel(name, positionMatrix) {
+    loader.load(name, (gltf) => {
+        if (currentModel) scene.remove(currentModel);
+
+        currentModel = gltf.scene;
+        currentModel.visible = true;
+
+        currentModel.position.setFromMatrixPosition(positionMatrix);
+        currentModel.rotation.set(0, 0, 0);
+        currentModel.scale.set(1, 1, 1);
+
+        scene.add(currentModel);
+        updateDimensions();
+    });
+}
+
+// ------------------------------------------------------------
+// Measure & Update Dimension Overlay
+// ------------------------------------------------------------
+function updateDimensions() {
+    if (!currentModel) return;
+
+    const box = new THREE.Box3().setFromObject(currentModel);
+    const size = new THREE.Vector3();
+    box.getSize(size);
+
+    const overlay = document.getElementById("dimOverlay");
+    overlay.innerHTML =
+        `<b>Dimensions</b><br>
+         Width: ${size.x.toFixed(2)} m<br>
+         Height: ${size.y.toFixed(2)} m<br>
+         Depth: ${size.z.toFixed(2)} m<br>
+         Scale: ${currentModel.scale.x.toFixed(1)}x<br>
+         Rotation: ${(currentModel.rotation.y * 57.3).toFixed(0)}°`;
+}
+
+// ------------------------------------------------------------
+// INIT
+// ------------------------------------------------------------
+function init() {
+
+    scene = new THREE.Scene();
+
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 40);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.2));
+
+    // Reticle
+    reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI/2),
+        new THREE.MeshBasicMaterial({ color:0xffffff, opacity:0.9, transparent:true })
+    );
+    reticle.matrixAutoUpdate = false;
+    reticle.visible = false;
+    scene.add(reticle);
+
+    // Controller tap to place model
+    const controller = renderer.xr.getController(0);
+    controller.addEventListener("select", () => {
+        if (selectedModelName && reticle.visible) {
+            loadModel(selectedModelName, reticle.matrix);
+        }
+    });
+    scene.add(controller);
+
+    // AR Button
+    const arBtn = ARButton.createButton(renderer, {
+        requiredFeatures: ["hit-test"],
+        optionalFeatures: ["dom-overlay"],
+        domOverlay: { root: document.body }
+    });
+    document.body.appendChild(arBtn);
+
+    document.getElementById("startAR").onclick = () => arBtn.click();
+
+    renderer.xr.addEventListener("sessionend", () => {
+        currentModel = null;
+        hitTestSource = null;
+        hitTestRequested = false;
+    });
+
+    renderer.setAnimationLoop(render);
+
+    setupTouchGestures();
+
+    window.addEventListener("resize", () =>
+        renderer.setSize(window.innerWidth, window.innerHeight)
+    );
+}
+
+// ------------------------------------------------------------
+// Touch Gestures: Drag, Rotate, Scale
+// ------------------------------------------------------------
+function setupTouchGestures() {
+
+    window.addEventListener("touchstart", (e) => {
+        if (!currentModel) return;
+
+        if (e.touches.length === 1) {
+            dragging = true;
+        }
+
+        if (e.touches.length === 2) {
+            scaling = true;
+            rotating = true;
+            prevTouchDist = getDist(e);
+            prevTouchAngle = getAngle(e);
+        }
+    });
+
+    window.addEventListener("touchmove", (e) => {
+        if (!currentModel) return;
+
+        if (dragging && e.touches.length === 1) {
+            // move with reticle
+            currentModel.position.setFromMatrixPosition(reticle.matrix);
+            updateDimensions();
+        }
+
+        if (e.touches.length === 2) {
+            const dist = getDist(e);
+            const angle = getAngle(e);
+
+            // Scale
+            let scaleFactor = dist / prevTouchDist;
+            currentModel.scale.multiplyScalar(scaleFactor);
+            prevTouchDist = dist;
+
+            // Rotation
+            let angleDiff = angle - prevTouchAngle;
+            currentModel.rotation.y += angleDiff * 0.01;
+            prevTouchAngle = angle;
+
+            updateDimensions();
+        }
+    });
+
+    window.addEventListener("touchend", () => {
+        dragging = false;
+        scaling = false;
+        rotating = false;
+    });
+}
+
+function getDist(e) {
+    return Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+    );
+}
+
+function getAngle(e) {
+    return Math.atan2(
+        e.touches[1].clientY - e.touches[0].clientY,
+        e.touches[1].clientX - e.touches[0].clientX
+    );
+}
+
+// ------------------------------------------------------------
+// RENDER LOOP + HIT TEST
+// ------------------------------------------------------------
+function render(t, frame) {
+
+    if (frame) {
+        const session = renderer.xr.getSession();
+
+        if (!hitTestRequested) {
+
+            session.requestReferenceSpace("viewer").then((vSpace) => {
+                session.requestHitTestSource({ space: vSpace }).then((source) => {
+                    hitTestSource = source;
+                });
+            });
+
+            session.requestReferenceSpace("local").then((refSpace) => {
+                renderer.xr.setReferenceSpace(refSpace);
+            });
+
+            hitTestRequested = true;
+        }
+
+        if (hitTestSource) {
+            const refSpace = renderer.xr.getReferenceSpace();
+            const hits = frame.getHitTestResults(hitTestSource);
+
+            if (hits.length > 0) {
+                const hit = hits[0].getPose(refSpace);
+                reticle.visible = true;
+                reticle.matrix.fromArray(hit.transform.matrix);
+                reticle.position.y += 0.002; // stability
+            } else {
+                reticle.visible = false;
+            }
+        }
+    }
+
+    renderer.render(scene, camera);
+}
+
+// ------------------------------------------------------------
+init();
+</script>
+
+</body>
+</html>
