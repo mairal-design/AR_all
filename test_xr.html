@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>WebXR AR Support Test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+    body { font-family: Arial; padding: 20px; }
+    .ok { color: green; font-weight: bold; }
+    .fail { color: red; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h2>WebXR AR Support Test</h2>
+<p>This page checks if your mobile supports WebXR and AR hit-test required for Three.js AR.</p>
+
+<div id="results">Checking...</div>
+
+<script>
+async function testWebXR() {
+    const results = document.getElementById("results");
+    let html = "";
+
+    // Test 1: does browser support navigator.xr ?
+    if (navigator.xr) {
+        html += "<p class='ok'>✔ navigator.xr is available</p>";
+    } else {
+        html += "<p class='fail'>✘ navigator.xr is NOT available — Browser does NOT support WebXR</p>";
+        results.innerHTML = html;
+        return;
+    }
+
+    // Test 2: does browser support immersive-ar ?
+    try {
+        const arSupported = await navigator.xr.isSessionSupported("immersive-ar");
+        if (arSupported) {
+            html += "<p class='ok'>✔ immersive-ar is supported</p>";
+        } else {
+            html += "<p class='fail'>✘ immersive-ar NOT supported — AR will NOT work on this device or browser</p>";
+        }
+    } catch (e) {
+        html += "<p class='fail'>✘ Error checking immersive-ar: " + e + "</p>";
+    }
+
+    // Test 3: check hit-test support (needed for placing objects)
+    try {
+        const hitTestSupported = await navigator.xr.isSessionSupported("immersive-ar")
+            .then(() => true)
+            .catch(() => false);
+
+        if (hitTestSupported) {
+            html += "<p class='ok'>✔ hit-test is available (AR placement supported)</p>";
+        } else {
+            html += "<p class='fail'>✘ hit-test NOT supported — Three.js AR placement will NOT work</p>";
+        }
+    } catch (e) {
+        html += "<p class='fail'>✘ Error checking hit-test: " + e + "</p>";
+    }
+
+    results.innerHTML = html;
+}
+
+testWebXR();
+</script>
+
+</body>
+</html>
