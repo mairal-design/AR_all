@@ -190,11 +190,32 @@ function render(timestamp, frame) {
     if (frame) {
         const session = renderer.xr.getSession();
 
+        // if (!hitTestSourceRequested) {
+        //     session.requestReferenceSpace("viewer").then((viewerSpace) => {
+        //         session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+        //             hitTestSource = source;
+        //         });
+        //     });
+
+        //     session.addEventListener("end", () => {
+        //         hitTestSourceRequested = false;
+        //         hitTestSource = null;
+        //     });
+
+        //     hitTestSourceRequested = true;
+        // }
         if (!hitTestSourceRequested) {
+
+            const session = renderer.xr.getSession();
+
             session.requestReferenceSpace("viewer").then((viewerSpace) => {
                 session.requestHitTestSource({ space: viewerSpace }).then((source) => {
                     hitTestSource = source;
                 });
+            });
+
+            session.requestReferenceSpace("local").then((refSpace) => {
+                renderer.xr.setReferenceSpace(refSpace);
             });
 
             session.addEventListener("end", () => {
