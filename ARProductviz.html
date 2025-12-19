@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>AR Product Visualizer</title>
 
 <!-- Import Map -->
@@ -16,7 +16,7 @@
 </script>
 
 <style>
-body { margin:0; overflow:hidden; font-family:Arial; }
+body { margin: 0; overflow: hidden; font-family: Arial; }
 
 /* Camera feed behind canvas */
 canvas {
@@ -26,7 +26,7 @@ canvas {
     z-index:0;
 }
 
-/* Main AR button */
+/* AR Button */
 #startAR {
     position:absolute;
     top:10px; left:10px;
@@ -38,7 +38,7 @@ canvas {
     font-size:16px;
 }
 
-/* Dropdown container */
+/* Dropdown Main Button */
 #modelMenuBtn {
     position:absolute;
     top:60px; left:10px;
@@ -51,29 +51,29 @@ canvas {
     cursor:pointer;
 }
 
-/* Dropdown Panel */
+/* Dropdown panel */
 #dropdownPanel {
     position:absolute;
     top:110px; left:10px;
-    width:240px;
-    z-index:30;
+    width:260px;
     background:white;
     border:1px solid #ccc;
     border-radius:6px;
     padding:10px;
     display:none;
-    max-height:400px;
+    max-height:420px;
     overflow-y:auto;
+    z-index:9999;  /* FIX */
 }
 
-/* Category header */
+/* Category headers */
 .category {
     font-weight:bold;
     margin-top:8px;
     cursor:pointer;
 }
 
-/* Sub-items */
+/* Items */
 .subitem {
     margin-left:15px;
     padding:4px;
@@ -84,17 +84,16 @@ canvas {
     border-radius:4px;
 }
 
-/* Dimensions Overlay */
+/* Dimension overlay */
 #dimOverlay {
     position:absolute;
     bottom:10px; left:10px;
-    z-index:30;
-    background:rgba(0,0,0,0.5);
+    background:rgba(0,0,0,0.55);
     color:white;
     padding:10px 16px;
     border-radius:8px;
+    z-index:30;
     font-size:14px;
-    min-width:180px;
 }
 </style>
 </head>
@@ -128,15 +127,8 @@ let hitTestRequested = false;
 let currentModel = null;
 let selectedModelName = null;
 
-let dragging = false;
-let scaling = false;
-let rotating = false;
-
-let prevTouchDist = 0;
-let prevTouchAngle = 0;
-
 // ------------------------------------------------------------
-// MODEL LIST (your filenames EXACTLY)
+// MODEL LIST (confirmed filenames)
 // ------------------------------------------------------------
 const modelList = {
     chairs: [
@@ -181,7 +173,7 @@ function buildDropdown() {
             s.textContent = m.name;
             s.onclick = () => {
                 selectedModelName = m.file;
-                reticle.visible = true;
+                dp.style.display = "none";  // close menu on select
             };
             sub.appendChild(s);
         });
@@ -189,7 +181,9 @@ function buildDropdown() {
         dp.appendChild(sub);
 
         cat.onclick = () => {
-            sub.style.display = (sub.style.display === "none") ? "block" : "none";
+            const open = sub.style.display === "block";
+            sub.style.display = open ? "none" : "block";
+            cat.textContent = title + (open ? " ▶" : " ▼");
         };
     }
 
@@ -200,19 +194,25 @@ function buildDropdown() {
 }
 buildDropdown();
 
+// Toggle dropdown
+document.getElementById("modelMenuBtn").onclick = () => {
+    const dp = document.getElementById("dropdownPanel");
+    dp.style.display = (dp.style.display === "block") ? "none" : "block";
+};
+
 // ------------------------------------------------------------
-// Load selected GLB
+// Load Model
 // ------------------------------------------------------------
 const loader = new GLTFLoader();
 
-function loadModel(name, positionMatrix) {
+function loadModel(name, matrix) {
     loader.load(name, (gltf) => {
         if (currentModel) scene.remove(currentModel);
 
         currentModel = gltf.scene;
         currentModel.visible = true;
 
-        currentModel.position.setFromMatrixPosition(positionMatrix);
+        currentModel.position.setFromMatrixPosition(matrix);
         currentModel.rotation.set(0, 0, 0);
         currentModel.scale.set(1, 1, 1);
 
@@ -222,7 +222,7 @@ function loadModel(name, positionMatrix) {
 }
 
 // ------------------------------------------------------------
-// Measure & Update Dimension Overlay
+// Update Dimension Overlay
 // ------------------------------------------------------------
 function updateDimensions() {
     if (!currentModel) return;
@@ -231,14 +231,70 @@ function updateDimensions() {
     const size = new THREE.Vector3();
     box.getSize(size);
 
-    const overlay = document.getElementById("dimOverlay");
-    overlay.innerHTML =
+    document.getElementById("dimOverlay").innerHTML =
         `<b>Dimensions</b><br>
          Width: ${size.x.toFixed(2)} m<br>
          Height: ${size.y.toFixed(2)} m<br>
          Depth: ${size.z.toFixed(2)} m<br>
-         Scale: ${currentModel.scale.x.toFixed(1)}x<br>
-         Rotation: ${(currentModel.rotation.y * 57.3).toFixed(0)}°`;
+         Scale: ${currentModel.scale.x.toFixed(2)}x<br>
+         Rotation: ${(currentModel.rotation.y * 57.3).toFixed(1)}°`;
+}
+
+// ------------------------------------------------------------
+// Touch Gestures
+// ------------------------------------------------------------
+let dragging = false;
+let prevDist = 0;
+let prevAngle = 0;
+
+window.addEventListener("touchstart", (e) => {
+    if (!currentModel) return;
+
+    if (e.touches.length === 1) dragging = true;
+
+    if (e.touches.length === 2) {
+        prevDist = dist(e);
+        prevAngle = angle(e);
+    }
+});
+
+window.addEventListener("touchmove", (e) => {
+    if (!currentModel) return;
+
+    if (dragging && e.touches.length === 1) {
+        currentModel.position.setFromMatrixPosition(reticle.matrix);
+        updateDimensions();
+    }
+
+    if (e.touches.length === 2) {
+        // Scale
+        const d = dist(e);
+        currentModel.scale.multiplyScalar(d / prevDist);
+        prevDist = d;
+
+        // Rotate
+        const a = angle(e);
+        currentModel.rotation.y += (a - prevAngle) * 0.01;
+        prevAngle = a;
+
+        updateDimensions();
+    }
+});
+
+window.addEventListener("touchend", () => dragging = false);
+
+function dist(e) {
+    return Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+    );
+}
+
+function angle(e) {
+    return Math.atan2(
+        e.touches[1].clientY - e.touches[0].clientY,
+        e.touches[1].clientX - e.touches[0].clientX
+    );
 }
 
 // ------------------------------------------------------------
@@ -248,9 +304,14 @@ function init() {
 
     scene = new THREE.Scene();
 
-    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 40);
+    camera = new THREE.PerspectiveCamera(
+        70,
+        window.innerWidth / window.innerHeight,
+        0.01,
+        40
+    );
 
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha:true });
+    renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.xr.enabled = true;
     document.body.appendChild(renderer.domElement);
@@ -259,14 +320,13 @@ function init() {
 
     // Reticle
     reticle = new THREE.Mesh(
-        new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI/2),
+        new THREE.RingGeometry(0.04,0.05,32).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({ color:0xffffff, opacity:0.9, transparent:true })
     );
     reticle.matrixAutoUpdate = false;
     reticle.visible = false;
     scene.add(reticle);
 
-    // Controller tap to place model
     const controller = renderer.xr.getController(0);
     controller.addEventListener("select", () => {
         if (selectedModelName && reticle.visible) {
@@ -275,7 +335,6 @@ function init() {
     });
     scene.add(controller);
 
-    // AR Button
     const arBtn = ARButton.createButton(renderer, {
         requiredFeatures: ["hit-test"],
         optionalFeatures: ["dom-overlay"],
@@ -287,84 +346,14 @@ function init() {
 
     renderer.xr.addEventListener("sessionend", () => {
         currentModel = null;
-        hitTestSource = null;
         hitTestRequested = false;
+        hitTestSource = null;
     });
 
     renderer.setAnimationLoop(render);
 
-    setupTouchGestures();
-
     window.addEventListener("resize", () =>
         renderer.setSize(window.innerWidth, window.innerHeight)
-    );
-}
-
-// ------------------------------------------------------------
-// Touch Gestures: Drag, Rotate, Scale
-// ------------------------------------------------------------
-function setupTouchGestures() {
-
-    window.addEventListener("touchstart", (e) => {
-        if (!currentModel) return;
-
-        if (e.touches.length === 1) {
-            dragging = true;
-        }
-
-        if (e.touches.length === 2) {
-            scaling = true;
-            rotating = true;
-            prevTouchDist = getDist(e);
-            prevTouchAngle = getAngle(e);
-        }
-    });
-
-    window.addEventListener("touchmove", (e) => {
-        if (!currentModel) return;
-
-        if (dragging && e.touches.length === 1) {
-            // move with reticle
-            currentModel.position.setFromMatrixPosition(reticle.matrix);
-            updateDimensions();
-        }
-
-        if (e.touches.length === 2) {
-            const dist = getDist(e);
-            const angle = getAngle(e);
-
-            // Scale
-            let scaleFactor = dist / prevTouchDist;
-            currentModel.scale.multiplyScalar(scaleFactor);
-            prevTouchDist = dist;
-
-            // Rotation
-            let angleDiff = angle - prevTouchAngle;
-            currentModel.rotation.y += angleDiff * 0.01;
-            prevTouchAngle = angle;
-
-            updateDimensions();
-        }
-    });
-
-    window.addEventListener("touchend", () => {
-        dragging = false;
-        scaling = false;
-        rotating = false;
-    });
-}
-
-function getDist(e) {
-    return Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-    );
-}
-
-function getAngle(e) {
-    return Math.atan2(
-        e.touches[1].clientY - e.touches[0].clientY,
-        e.touches[1].clientX - e.touches[0].clientX
     );
 }
 
@@ -378,15 +367,14 @@ function render(t, frame) {
 
         if (!hitTestRequested) {
 
-            session.requestReferenceSpace("viewer").then((vSpace) => {
-                session.requestHitTestSource({ space: vSpace }).then((source) => {
-                    hitTestSource = source;
-                });
+            session.requestReferenceSpace("viewer").then((viewerSpace) => {
+                session.requestHitTestSource({ space: viewerSpace })
+                .then((source) => hitTestSource = source);
             });
 
-            session.requestReferenceSpace("local").then((refSpace) => {
-                renderer.xr.setReferenceSpace(refSpace);
-            });
+            session.requestReferenceSpace("local").then((refSpace) =>
+                renderer.xr.setReferenceSpace(refSpace)
+            );
 
             hitTestRequested = true;
         }
@@ -399,7 +387,7 @@ function render(t, frame) {
                 const hit = hits[0].getPose(refSpace);
                 reticle.visible = true;
                 reticle.matrix.fromArray(hit.transform.matrix);
-                reticle.position.y += 0.002; // stability
+                reticle.position.y += 0.002;
             } else {
                 reticle.visible = false;
             }
