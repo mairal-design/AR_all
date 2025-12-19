@@ -18,7 +18,6 @@
 <style>
 body { margin: 0; overflow: hidden; font-family: Arial; }
 
-/* FIX: Allows camera feed to show */
 canvas {
     position: absolute;
     top: 0; left: 0;
@@ -39,6 +38,7 @@ canvas {
 }
 </style>
 </head>
+
 <body>
 
 <button id="startAR">Start AR</button>
@@ -142,10 +142,10 @@ function init() {
         scene.add(model2);
     });
 
-    // Reticle for placement
+    // Small ARCore-friendly reticle (VERY important)
     reticle = new THREE.Mesh(
-        new THREE.RingGeometry(0.1, 0.15, 32).rotateX(-Math.PI / 2),
-        new THREE.MeshBasicMaterial({ color: 0x00ff00 })
+        new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0.9, transparent: true })
     );
     reticle.matrixAutoUpdate = false;
     reticle.visible = false;
@@ -156,7 +156,7 @@ function init() {
     controller.addEventListener("select", placeObjects);
     scene.add(controller);
 
-    // AR button must stay visible in DOM
+    // ARButton
     const arBtn = ARButton.createButton(renderer, {
         requiredFeatures: ["hit-test"],
         optionalFeatures: ["dom-overlay"],
@@ -164,7 +164,7 @@ function init() {
     });
     document.body.appendChild(arBtn);
 
-    // Custom button triggers ARButton
+    // Custom button triggers AR
     document.getElementById("startAR").onclick = () => arBtn.click();
 
     renderer.xr.addEventListener("sessionend", () => {
@@ -214,9 +214,8 @@ function render(timestamp, frame) {
         if (!hitTestRequested) {
 
             session.requestReferenceSpace("viewer").then((viewerSpace) => {
-                session.requestHitTestSource({ space: viewerSpace }).then((source) => {
-                    hitTestSource = source;
-                });
+                session.requestHitTestSource({ space: viewerSpace })
+                .then((source) => { hitTestSource = source; });
             });
 
             session.requestReferenceSpace("local").then((refSpace) => {
@@ -233,12 +232,16 @@ function render(timestamp, frame) {
 
         if (hitTestSource) {
             const refSpace = renderer.xr.getReferenceSpace();
-            const results = frame.getHitTestResults(hitTestSource);
+            const results = frame.getHitTestResults(hitTestSource) ?? [];
 
             if (results.length > 0) {
                 const hitPose = results[0].getPose(refSpace);
                 reticle.visible = true;
                 reticle.matrix.fromArray(hitPose.transform.matrix);
+
+                // slight lift for stability
+                reticle.position.y += 0.002;
+
             } else {
                 reticle.visible = false;
             }
