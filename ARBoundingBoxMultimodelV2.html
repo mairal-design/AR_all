@@ -128,7 +128,7 @@ function init() {
     // Load models
     const loader = new GLTFLoader();
 
-    loader.load("./wine-lady-modified.glb", (gltf) => {
+    loader.load("./Horse.glb", (gltf) => {
         model1 = gltf.scene;
         model1.scale.set(1, 1, 1);
         model1.visible = false;
