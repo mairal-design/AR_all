@@ -18,15 +18,16 @@
 <style>
 body { margin: 0; overflow: hidden; font-family: Arial; }
 
-/* Camera feed behind canvas */
+/* AR canvas (no touch so UI works) */
 canvas {
     position: absolute;
     top:0; left:0;
     width:100vw; height:100vh;
     z-index:0;
+    pointer-events: none !important;   /* IMPORTANT FIX */
 }
 
-/* AR Button */
+/* AR Start Button */
 #startAR {
     position:absolute;
     top:10px; left:10px;
@@ -36,6 +37,7 @@ canvas {
     border:1px solid #ccc;
     border-radius:8px;
     font-size:16px;
+    pointer-events:auto !important;
 }
 
 /* Dropdown Main Button */
@@ -49,9 +51,10 @@ canvas {
     border-radius:8px;
     font-size:16px;
     cursor:pointer;
+    pointer-events:auto !important;
 }
 
-/* Dropdown panel */
+/* Dropdown Panel */
 #dropdownPanel {
     position:absolute;
     top:110px; left:10px;
@@ -63,14 +66,16 @@ canvas {
     display:none;
     max-height:420px;
     overflow-y:auto;
-    z-index:9999;  /* FIX */
+    z-index:999999 !important;   /* IMPORTANT FIX */
+    pointer-events:auto !important;
 }
 
-/* Category headers */
+/* Category title */
 .category {
     font-weight:bold;
     margin-top:8px;
     cursor:pointer;
+    pointer-events:auto !important;
 }
 
 /* Items */
@@ -78,6 +83,7 @@ canvas {
     margin-left:15px;
     padding:4px;
     cursor:pointer;
+    pointer-events:auto !important;
 }
 .subitem:hover {
     background:#eee;
@@ -94,6 +100,7 @@ canvas {
     border-radius:8px;
     z-index:30;
     font-size:14px;
+    pointer-events:auto !important;
 }
 </style>
 </head>
@@ -127,9 +134,9 @@ let hitTestRequested = false;
 let currentModel = null;
 let selectedModelName = null;
 
-// ------------------------------------------------------------
-// MODEL LIST (confirmed filenames)
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   Model List
+------------------------------------------------------------ */
 const modelList = {
     chairs: [
         { name: "Chair 1", file: "chair1.glb" },
@@ -151,9 +158,9 @@ const modelList = {
     ]
 };
 
-// ------------------------------------------------------------
-// Build Dropdown UI
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   Build Dropdown UI (Multi-level)
+------------------------------------------------------------ */
 function buildDropdown() {
     const dp = document.getElementById("dropdownPanel");
     dp.innerHTML = "";
@@ -173,7 +180,7 @@ function buildDropdown() {
             s.textContent = m.name;
             s.onclick = () => {
                 selectedModelName = m.file;
-                dp.style.display = "none";  // close menu on select
+                dp.style.display = "none";
             };
             sub.appendChild(s);
         });
@@ -194,15 +201,15 @@ function buildDropdown() {
 }
 buildDropdown();
 
-// Toggle dropdown
+/* Toggle dropdown */
 document.getElementById("modelMenuBtn").onclick = () => {
     const dp = document.getElementById("dropdownPanel");
     dp.style.display = (dp.style.display === "block") ? "none" : "block";
 };
 
-// ------------------------------------------------------------
-// Load Model
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   Load Model
+------------------------------------------------------------ */
 const loader = new GLTFLoader();
 
 function loadModel(name, matrix) {
@@ -210,20 +217,19 @@ function loadModel(name, matrix) {
         if (currentModel) scene.remove(currentModel);
 
         currentModel = gltf.scene;
-        currentModel.visible = true;
-
         currentModel.position.setFromMatrixPosition(matrix);
         currentModel.rotation.set(0, 0, 0);
         currentModel.scale.set(1, 1, 1);
+        currentModel.visible = true;
 
         scene.add(currentModel);
         updateDimensions();
     });
 }
 
-// ------------------------------------------------------------
-// Update Dimension Overlay
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   Update Dimensions
+------------------------------------------------------------ */
 function updateDimensions() {
     if (!currentModel) return;
 
@@ -237,12 +243,12 @@ function updateDimensions() {
          Height: ${size.y.toFixed(2)} m<br>
          Depth: ${size.z.toFixed(2)} m<br>
          Scale: ${currentModel.scale.x.toFixed(2)}x<br>
-         Rotation: ${(currentModel.rotation.y * 57.3).toFixed(1)}°`;
+         Rotation: ${(currentModel.rotation.y * 57.3).toFixed(0)}°`;
 }
 
-// ------------------------------------------------------------
-// Touch Gestures
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   Gestures (Drag, Scale, Rotate)
+------------------------------------------------------------ */
 let dragging = false;
 let prevDist = 0;
 let prevAngle = 0;
@@ -289,7 +295,6 @@ function dist(e) {
         e.touches[0].clientY - e.touches[1].clientY
     );
 }
-
 function angle(e) {
     return Math.atan2(
         e.touches[1].clientY - e.touches[0].clientY,
@@ -297,19 +302,13 @@ function angle(e) {
     );
 }
 
-// ------------------------------------------------------------
-// INIT
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   INIT
+------------------------------------------------------------ */
 function init() {
 
     scene = new THREE.Scene();
-
-    camera = new THREE.PerspectiveCamera(
-        70,
-        window.innerWidth / window.innerHeight,
-        0.01,
-        40
-    );
+    camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 40);
 
     renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -320,13 +319,14 @@ function init() {
 
     // Reticle
     reticle = new THREE.Mesh(
-        new THREE.RingGeometry(0.04,0.05,32).rotateX(-Math.PI/2),
+        new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI/2),
         new THREE.MeshBasicMaterial({ color:0xffffff, opacity:0.9, transparent:true })
     );
     reticle.matrixAutoUpdate = false;
     reticle.visible = false;
     scene.add(reticle);
 
+    // Tap to place
     const controller = renderer.xr.getController(0);
     controller.addEventListener("select", () => {
         if (selectedModelName && reticle.visible) {
@@ -335,6 +335,7 @@ function init() {
     });
     scene.add(controller);
 
+    // AR Button
     const arBtn = ARButton.createButton(renderer, {
         requiredFeatures: ["hit-test"],
         optionalFeatures: ["dom-overlay"],
@@ -352,14 +353,17 @@ function init() {
 
     renderer.setAnimationLoop(render);
 
+    // IMPORTANT FIX: Force UI activation in AR mode
+    document.body.addEventListener("touchstart", () => {}, { passive:true });
+
     window.addEventListener("resize", () =>
         renderer.setSize(window.innerWidth, window.innerHeight)
     );
 }
 
-// ------------------------------------------------------------
-// RENDER LOOP + HIT TEST
-// ------------------------------------------------------------
+/* ------------------------------------------------------------
+   RENDER LOOP + HIT TEST
+------------------------------------------------------------ */
 function render(t, frame) {
 
     if (frame) {
@@ -397,7 +401,7 @@ function render(t, frame) {
     renderer.render(scene, camera);
 }
 
-// ------------------------------------------------------------
+/* ------------------------------------------------------------ */
 init();
 </script>
 
