@@ -114,14 +114,14 @@ function init() {
     // Load models
     const loader = new GLTFLoader();
 
-    loader.load("chair2.glb", (gltf) => {
+    loader.load("./chair2.glb", (gltf) => {
         model1 = gltf.scene;
         model1.scale.set(1,1,1);
         model1.visible = false;
         scene.add(model1);
     });
 
-    loader.load("chair1.glb", (gltf) => {
+    loader.load("./chair1.glb", (gltf) => {
         model2 = gltf.scene;
         model2.scale.set(1,1,1);
         model2.visible = false;
@@ -142,10 +142,19 @@ function init() {
     scene.add(controller);
 
     // AR button
-    const arBtn = ARButton.createButton(renderer, { requiredFeatures: ['hit-test'] });
-    document.getElementById("startAR").addEventListener("click", () => {
-        arBtn.click();
-    });
+// AR button
+const arBtn = ARButton.createButton(renderer, {
+    requiredFeatures: ['hit-test'],
+    optionalFeatures: ['dom-overlay'],
+    domOverlay: { root: document.body }
+});
+
+document.body.appendChild(arBtn); // THIS IS REQUIRED
+
+document.getElementById("startAR").addEventListener("click", () => {
+    arBtn.click();
+});
+
 
     window.addEventListener("resize", onResize);
 }
